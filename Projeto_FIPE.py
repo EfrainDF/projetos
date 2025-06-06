@@ -246,7 +246,8 @@ def carregar_veiculos_fixos():
         except Exception as e:
             st.warning(f"❌ Erro ao carregar {nome}: {str(e)}")
             print(f"[ERRO] {nome} - marca: {marca} / modelo: {modelo} / ano: {ano} → {str(e)}")
-        time.sleep(0.1)  # Delay apenas visual
+
+        time.sleep(0.8)  # ⏱️ pausa para evitar bloqueios entre chamadas
 
     progresso.empty()
     return veiculos_comparacao, veiculos_fixos

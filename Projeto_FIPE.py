@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import time
 
 # Carrega a chave da API
 dotenv.load_dotenv()
@@ -15,19 +16,22 @@ HEADERS = {
     "X-Subscription-Token": TOKEN
 }
 URL_BASE = "https://fipe.parallelum.com.br/api/v2"
-NUM_MESES = 24  # Altere este valor para mudar o número de meses analisados
+NUM_MESES = 24
 
 
+@st.cache_data(show_spinner=False)
 def requisitar_dados(endpoint, parametros=None):
     try:
         resposta = requests.get(f"{URL_BASE}/{endpoint}", headers=HEADERS, params=parametros)
         resposta.raise_for_status()
         return resposta.json()
-    except requests.HTTPError:
+    except requests.RequestException:
         return None
 
 
 def ordenar_marcas_por_relevancia(marcas):
+    if not marcas:
+        return []
     prioridades = [
         "VolksWagen", "Fiat", "Chevrolet", "Toyota", "Ford", "Honda",
         "Hyundai", "Renault", "Nissan", "Jeep", "Peugeot", "Citroën", "Mitsubishi"
@@ -37,42 +41,64 @@ def ordenar_marcas_por_relevancia(marcas):
     return principais + sorted(demais, key=lambda x: x['name'])
 
 
+@st.cache_data(show_spinner=False)
 def consultar_preco_por_referencia(cod_marca, cod_modelo, cod_ano, ref_code):
     url = f"{URL_BASE}/cars/brands/{cod_marca}/models/{cod_modelo}/years/{cod_ano}"
     params = {"reference": ref_code}
-    resposta = requests.get(url, headers=HEADERS, params=params)
-    if resposta.status_code == 200:
+    try:
+        resposta = requests.get(url, headers=HEADERS, params=params)
+        resposta.raise_for_status()
         dados = resposta.json()
         return dados.get("price", None)
-    return None
+    except:
+        return None
 
 
 def obter_codigo_por_nome(lista, chave_nome):
+    if not lista or not isinstance(lista, list):
+        return None
     for item in lista:
         if chave_nome.lower() in item['name'].lower():
             return item['code']
     return None
 
 
+@st.cache_data(show_spinner=False)
 def obter_historico_veiculo(marca, modelo_nome, ano_str):
     marcas = requisitar_dados("cars/brands")
+    if not marcas:
+        st.error("❌ Erro ao obter marcas.")
+        return None
+
     cod_marca = obter_codigo_por_nome(marcas, marca)
     if not cod_marca:
         return None
 
     modelos = requisitar_dados(f"cars/brands/{cod_marca}/models")
+    if not modelos:
+        st.error("❌ Erro ao obter modelos.")
+        return None
+
     cod_modelo = obter_codigo_por_nome(modelos, modelo_nome)
     if not cod_modelo:
         return None
 
     anos = requisitar_dados(f"cars/brands/{cod_marca}/models/{cod_modelo}/years")
+    if not anos:
+        st.error("❌ Erro ao obter anos para o modelo.")
+        return None
+
     cod_ano = obter_codigo_por_nome(anos, str(ano_str))
     if not cod_ano:
         return None
 
     referencias = requisitar_dados("references")
+    if not referencias:
+        st.error("❌ Erro ao obter referências FIPE.")
+        return None
+
     historico = []
-    for ref in referencias[:NUM_MESES + 1]:  # +1 para calcular a variação inicial
+    for ref in referencias[:NUM_MESES + 1]:
         ref_code = ref["code"]
         preco_str = consultar_preco_por_referencia(cod_marca, cod_modelo, cod_ano, ref_code)
         if preco_str:
@@ -87,6 +113,7 @@ def obter_historico_veiculo(marca, modelo_nome, ano_str):
                 continue
     if len(historico) < 2:
         return None
+
     df = pd.DataFrame(historico).sort_values("Referência").reset_index(drop=True)
     df["Variação (R$)"] = df["Preço (R$)"].diff()
     df["Variação (%)"] = (df["Preço (R$)"] / df["Preço (R$)"].shift(1) - 1) * 100
@@ -137,8 +164,8 @@ def exibir_historico(df, veiculo_nome=None):
         st.plotly_chart(fig, use_container_width=True)
 
 
-def exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado, veiculo_buscado_nome):
-    if not veiculos_comparacao or df_veiculo_buscado is None:
+def exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado=None, veiculo_buscado_nome=None):
+    if not veiculos_comparacao:
         return
 
     # Calcular variação percentual para todos os veículos
@@ -148,10 +175,11 @@ def exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado, veiculo_
         if variacao is not None:
             variacoes.append((nome, variacao))
 
-    # Adicionar o veículo buscado à comparação (com lupa)
-    variacao_buscado = calcular_variacao_percentual(df_veiculo_buscado)
-    if variacao_buscado is not None:
-        variacoes.append((f"🔍 {veiculo_buscado_nome}", variacao_buscado))  # Alteração aqui
+    # Adicionar o veículo buscado à comparação se existir
+    if df_veiculo_buscado is not None:
+        variacao_buscado = calcular_variacao_percentual(df_veiculo_buscado)
+        if variacao_buscado is not None:
+            variacoes.append((f"🔍 {veiculo_buscado_nome}", variacao_buscado))
 
     if not variacoes:
         return
@@ -174,21 +202,53 @@ def exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado, veiculo_
             textposition='auto'
         ))
 
+    title = "Comparação de Valorização/Desvalorização" + (
+        f" (com {veiculo_buscado_nome})" if df_veiculo_buscado is not None else ""
+    )
+
     fig.update_layout(
-        title=f"Comparação de Valorização/Desvalorização nos Últimos {NUM_MESES} Meses",
+        title=f"{title} – Últimos {NUM_MESES} Meses",
         xaxis_title="Veículo",
         yaxis_title="Variação Percentual (%)",
         showlegend=False,
         hovermode="x"
     )
 
-    st.markdown("### 📊 Comparação com Veículos de Referência")
+    st.markdown("### 📊 Comparação de Veículos")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def carregar_veiculos_fixos():
+    veiculos_fixos = [
+        ("Toyota Corolla XEi 2.0 Flex (2012)", "Toyota", "Corolla XEi 2.0 Flex 16V Aut.", 2012),
+        ("Nissan Sentra SL 2.0 Flex (2016)", "Nissan", "Sentra SL 2.0/ 2.0 Flex Fuel 16V Aut.", 2016),
+        ("Honda Civic Sed. LXL 1.8 Flex (2013)", "Honda", "Civic Sed. LXL/ LXL SE 1.8 Flex 16V Aut.", 2013),
+        ("Hyundai ix35 GLS 2.0 Flex (2012)", "Hyundai", "ix35 GLS 2.0 16V 2WD Flex Aut.", 2012),
+        ("Hyundai Santa Fe 3.3 V6 (2012)", "Hyundai", "Santa Fe/GLS 3.3 V6 4X4 Tiptronic", 2012),
+        ("Kia Sportage EX 2.0 Flex (2012)", "Kia Motors", "Sportage EX 2.0 16V/ 2.0 16V Flex Aut.", 2012),
+    ]
+
+    progresso = st.progress(0, text="Carregando veículos de referência...")
+    veiculos_comparacao = []
+    total = len(veiculos_fixos)
+
+    for i, (nome, marca, modelo, ano) in enumerate(veiculos_fixos):
+        progresso.progress((i + 1) / total, text=f"Carregando {nome}...")
+        df = obter_historico_veiculo(marca, modelo, ano)
+        if df is not None:
+            veiculos_comparacao.append((nome, df))
+        time.sleep(0.1)  # Pequeno delay para visualização
+
+    progresso.empty()
+    return veiculos_comparacao, veiculos_fixos
 
 
 def main():
     st.set_page_config(page_title="FIPE – Histórico de Preço", layout="wide")
     st.title(f"🚗 Consulta Tabela FIPE – Últimos {NUM_MESES} Meses")
+
+    # 🔍 Buscador de veículos - exibido antes dos fixos
+    st.markdown("### 🔍 Buscar Veículo")
 
     marcas = requisitar_dados("cars/brands")
     if not marcas:
@@ -197,15 +257,6 @@ def main():
     marcas_ordenadas = ordenar_marcas_por_relevancia(marcas)
     nome_para_codigo = {f"{m['name']} (cód: {m['code']})": m['code'] for m in marcas_ordenadas}
     marca_escolhida = st.selectbox("📌 Selecione uma marca:", [""] + list(nome_para_codigo.keys()), index=0)
-
-    veiculos_fixos = [
-        ("Toyota Corolla XEi 2.0 Flex (2012)", "Toyota", "Corolla XEi 2.0 Flex 16V Aut.", 2012),
-        ("Nissan Sentra SL 2.0 Flex (2016)", "Nissan", "Sentra SL 2.0/ 2.0 Flex Fuel 16V Aut.", 2016),
-        ("Honda Civic Sed. LXL 1.8 Flex (2013)", "Honda", "Civic Sed. LXL/ LXL SE 1.8 Flex 16V Aut.", 2013),
-        ("Hyundai ix35 GLS 2.0 Flex (2012)", "Hyundai", "ix35 GLS 2.0 16V 2WD Flex Aut.", 2012),
-        ("Hyundai Santa Fe 3.3 V6 (2012)", "Hyundai", "Santa Fe/GLS 3.3 V6 4X4 Tiptronic", 2012),
-        ("Kia Sportage EX 2.0 Flex (2012)", "Kia Motors", "Sportage EX 2.0 16V/ 2.0 16V Flex Aut.", 2012),
-]
 
     df_veiculo_buscado = None
     veiculo_buscado_nome = None
@@ -232,74 +283,39 @@ def main():
             ano_escolhido = st.selectbox("📅 Selecione o ano:", [""] + list(nome_para_ano.keys()), index=0)
 
             if ano_escolhido:
-                cod_ano = nome_para_ano[ano_escolhido]
                 veiculo_buscado_nome = f"{marca_escolhida.split(' (')[0]} {modelo_selecionado} ({ano_escolhido.split(' ')[0]})"
-                df_veiculo_buscado = obter_historico_veiculo(
-                    marca_escolhida.split(' (')[0],
-                    modelo_selecionado,
-                    ano_escolhido.split(' ')[0]
-                )
+
+                with st.spinner(f'Buscando dados para {veiculo_buscado_nome}...'):
+                    df_veiculo_buscado = obter_historico_veiculo(
+                        marca_escolhida.split(' (')[0],
+                        modelo_selecionado,
+                        ano_escolhido.split(' ')[0]
+                    )
 
                 if df_veiculo_buscado is not None:
+                    st.markdown("---")
                     exibir_historico(df_veiculo_buscado, veiculo_buscado_nome)
                 else:
                     st.warning("⚠️ Nenhum histórico de preço disponível para esse veículo.")
 
-    # Obter históricos dos veículos fixos para comparação
-    veiculos_comparacao = []
-    for nome, marca, modelo, ano in veiculos_fixos:
-        df = obter_historico_veiculo(marca, modelo, ano)
-        if df is not None:
-            veiculos_comparacao.append((nome, df))
+    # 💤 Aguarda brevemente antes de carregar veículos fixos
+    time.sleep(0.8)
 
-    # Exibir comparação mesmo sem veículo buscado
-    if veiculos_comparacao:
-        if df_veiculo_buscado is not None:
-            exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado, veiculo_buscado_nome)
-        else:
-            st.markdown("### 📊 Comparação de Veículos de Referência")
-
-            variacoes = []
-            for nome, df in veiculos_comparacao:
-                variacao = calcular_variacao_percentual(df)
-                if variacao is not None:
-                    variacoes.append((nome, variacao))
-
-            if variacoes:
-                df_comparacao = pd.DataFrame(variacoes, columns=["Veículo", "Variação (%)"])
-                df_comparacao = df_comparacao.sort_values("Variação (%)", ascending=False)
-
-                fig = go.Figure()
-                for i, row in df_comparacao.iterrows():
-                    cor = "green" if row["Variação (%)"] >= 0 else "red"
-                    fig.add_trace(go.Bar(
-                        x=[row["Veículo"]],
-                        y=[row["Variação (%)"]],
-                        name=row["Veículo"],
-                        marker_color=cor,
-                        text=[f"{row['Variação (%)']:.2f}%"],
-                        textposition='auto'
-                    ))
-
-                fig.update_layout(
-                    title=f"Valorização/Desvalorização nos Últimos {NUM_MESES} Meses",
-                    xaxis_title="Veículo",
-                    yaxis_title="Variação Percentual (%)",
-                    showlegend=False,
-                    hovermode="x"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-    # Seção dos veículos fixos (que estava faltando)
+    # 🚘 Veículos fixos
     st.markdown("---")
     st.markdown("### 🔍 Veículos de Referência (Histórico Completo)")
-    for nome, marca, modelo, ano in veiculos_fixos:
+
+    with st.spinner('Carregando dados de referência...'):
+        veiculos_comparacao, veiculos_fixos = carregar_veiculos_fixos()
+
+    if veiculos_comparacao:
+        # Comparação agora inclui o veículo buscado, se houver
+        exibir_comparacao_veiculos(veiculos_comparacao, df_veiculo_buscado, veiculo_buscado_nome)
+
+    # Exibe histórico individual de cada fixo
+    for nome, df in veiculos_comparacao:
         st.markdown(f"#### 🔧 {nome}")
-        historico_df = obter_historico_veiculo(marca, modelo, ano)
-        if historico_df is not None:
-            exibir_historico(historico_df, nome)
-        else:
-            st.warning("❌ Não foi possível obter o histórico.")
+        exibir_historico(df, nome)
 
 
 if __name__ == "__main__":

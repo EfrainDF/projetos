@@ -13,8 +13,10 @@ TOKEN = os.getenv("CHAVE_API_FIPE")
 
 HEADERS = {
     "accept": "application/json",
-    "X-Subscription-Token": TOKEN
+    "X-Subscription-Token": TOKEN,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"
 }
+
 URL_BASE = "https://fipe.parallelum.com.br/api/v2"
 NUM_MESES = 24
 
@@ -234,10 +236,17 @@ def carregar_veiculos_fixos():
 
     for i, (nome, marca, modelo, ano) in enumerate(veiculos_fixos):
         progresso.progress((i + 1) / total, text=f"Carregando {nome}...")
-        df = obter_historico_veiculo(marca, modelo, ano)
-        if df is not None:
-            veiculos_comparacao.append((nome, df))
-        time.sleep(0.1)  # Pequeno delay para visualização
+        try:
+            df = obter_historico_veiculo(marca, modelo, ano)
+            if df is not None:
+                veiculos_comparacao.append((nome, df))
+            else:
+                st.warning(f"❌ Histórico não encontrado para {nome}")
+                print(f"[NULO] {nome} - marca: {marca} / modelo: {modelo} / ano: {ano}")
+        except Exception as e:
+            st.warning(f"❌ Erro ao carregar {nome}: {str(e)}")
+            print(f"[ERRO] {nome} - marca: {marca} / modelo: {modelo} / ano: {ano} → {str(e)}")
+        time.sleep(0.1)  # Delay apenas visual
 
     progresso.empty()
     return veiculos_comparacao, veiculos_fixos

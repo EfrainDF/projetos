@@ -201,11 +201,11 @@ def main():
     veiculos_fixos = [
         ("Toyota Corolla XEi 2.0 Flex (2012)", "Toyota", "Corolla XEi 2.0 Flex 16V Aut.", 2012),
         ("Nissan Sentra SL 2.0 Flex (2016)", "Nissan", "Sentra SL 2.0/ 2.0 Flex Fuel 16V Aut.", 2016),
+        ("Honda Civic Sed. LXL 1.8 Flex (2013)", "Honda", "Civic Sed. LXL/ LXL SE 1.8 Flex 16V Aut.", 2013),
         ("Hyundai ix35 GLS 2.0 Flex (2012)", "Hyundai", "ix35 GLS 2.0 16V 2WD Flex Aut.", 2012),
         ("Hyundai Santa Fe 3.3 V6 (2012)", "Hyundai", "Santa Fe/GLS 3.3 V6 4X4 Tiptronic", 2012),
         ("Kia Sportage EX 2.0 Flex (2012)", "Kia Motors", "Sportage EX 2.0 16V/ 2.0 16V Flex Aut.", 2012),
-        ("Kia Sorento 3.5 V6 (2012)", "Kia Motors", "Sorento 3.5 V6 24V 4x2 Aut.", 2012),
-    ]
+]
 
     df_veiculo_buscado = None
     veiculo_buscado_nome = None
